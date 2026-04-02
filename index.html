@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>ExpoJudge Multi-Judge Merger v11 Optimized</title>
+<title>ExpoJudge Multi-Judge Merger</title>
 <meta name="theme-color" content="#1d4ed8" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
@@ -159,20 +159,6 @@ code.inline {
 }
 
 .footer-note { text-align:center; color:var(--muted); font-size:.86rem; padding-bottom:18px; }
-
-.toolbar{
-  display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; margin-top:12px;
-}
-.toolbar-left,.toolbar-right{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
-.mini-input{
-  width:auto; min-width:180px; padding:10px 12px;
-}
-.pagination{
-  display:flex; gap:8px; align-items:center; flex-wrap:wrap;
-}
-.page-indicator{
-  font-size:.9rem; color:var(--muted); font-weight:700;
-}
 </style>
 </head>
 <body>
@@ -198,7 +184,7 @@ code.inline {
     <div>
       <div class="card">
         <h2>Setup</h2>
-        <div class="tiny">Upload all judge Excel sheets, then review merged rankings and resolve tie zones. Optimized for large events with pagination and duplicate-row protection.</div>
+        <div class="tiny">Upload all judge Excel sheets, then review merged rankings and resolve tie zones.</div>
 
         <label for="eventName">Hackathon / Expo Name</label>
         <input id="eventName" value="HACKFUSION-2K26" placeholder="HACKFUSION-2K26">
@@ -365,16 +351,6 @@ code.inline {
 
         <div class="tab-panel" id="tab-raw">
           <div class="tiny">Merged judge rows after normalization. Use this to verify parsing and mapping.</div>
-          <div class="toolbar">
-            <div class="toolbar-left">
-              <input id="rawSearch" class="mini-input" placeholder="Search judge or project">
-            </div>
-            <div class="toolbar-right pagination">
-              <button class="ghost" id="rawPrevBtn" type="button">◀ Prev</button>
-              <span class="page-indicator" id="rawPageInfo">Page 1 / 1</span>
-              <button class="ghost" id="rawNextBtn" type="button">Next ▶</button>
-            </div>
-          </div>
           <div class="table-wrap" style="margin-top:12px;">
             <table id="rawTable">
               <thead>
@@ -421,10 +397,6 @@ let normalizedRows = [];
 let mergedProjects = [];
 let tieGroups = [];
 let manualOverrides = {};
-let rowKeys = new Set();
-let rankingPage = 1;
-let rawPage = 1;
-const PAGE_SIZE = 25;
 
 const categoryLabels = {
   innovation: "Innovation",
@@ -548,20 +520,6 @@ function toNumber(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-
-function buildRowKey(row) {
-  return [
-    normalizeKey(row.judge),
-    normalizeKey(row.project),
-    row.innovation ?? "",
-    row.technical ?? "",
-    row.impact ?? "",
-    row.scalability ?? "",
-    row.presentation ?? "",
-    normalizeKey(row.notes || "")
-  ].join("|");
-}
-
 function clampScore(v) {
   if (v === null || v === undefined) return null;
   return Math.max(0, Math.min(10, v));
@@ -661,8 +619,10 @@ function parseFile(file) {
 }
 
 async function loadFiles(files) {
+
+  normalizedRows = [];
+  q("fileList").innerHTML = "";
   let importedTotal = 0;
-  let skippedDuplicates = 0;
   let fileCount = 0;
   for (const file of files) {
     const itemEl = document.createElement("div");
@@ -671,32 +631,13 @@ async function loadFiles(files) {
     q("fileList").appendChild(itemEl);
     try {
       const rows = await parseFile(file);
-      let accepted = 0;
-      rows.forEach(r => {
-        const key = buildRowKey(r);
-        if (rowKeys.has(key)) {
-          skippedDuplicates += 1;
-          return;
-        }
-        rowKeys.add(key);
-        normalizedRows.push(r);
-        accepted += 1;
-      });
-      importedTotal += accepted;
-      fileCount += 1;
-      itemEl.innerHTML = `<strong>${file.name}</strong><div class="tiny">${accepted} new valid rows imported${rows.length !== accepted ? ` • ${rows.length - accepted} duplicate row(s) skipped` : ""}</div>`;
+      normalizedRows.push(...rows);
+      itemEl.innerHTML = `<strong>${file.name}</strong><div class="tiny">${rows.length} valid judge rows imported</div>`;
     } catch (err) {
       itemEl.innerHTML = `<strong>${file.name}</strong><div class="tiny" style="color:#b42318;">${err.message}</div>`;
     }
   }
-  rawPage = 1;
-  rankingPage = 1;
   renderRawTable();
-  q("importStatus").style.display = "block";
-  q("importStatus").innerHTML = importedTotal
-    ? `<strong>${importedTotal}</strong> new valid rows imported from <strong>${fileCount}</strong> file(s). ${skippedDuplicates ? `<strong>${skippedDuplicates}</strong> duplicate row(s) skipped. ` : ""}All uploaded rows are now included in the combined ranking.`
-    : `No new valid judge rows were added. Existing rows were kept intact. Make sure your sheet contains columns like <code class="inline">Judge Name</code>, <code class="inline">Project / Team Name</code>, and the 5 score fields on a 1–10 scale.`;
-  if (normalizedRows.length) applyRanking();
 }
 
 function mergeProjects() {
@@ -815,39 +756,11 @@ function updateStats() {
   q("kpiProjects").textContent = mergedProjects.length;
   q("kpiJudges").textContent = judges.size;
   q("kpiTies").textContent = tieGroups.length;
-  if (q("importStatus") && normalizedRows.length && q("importStatus").style.display !== "block") {
-    q("importStatus").style.display = "block";
-    q("importStatus").innerHTML = `<strong>${normalizedRows.length}</strong> total normalized judge rows currently loaded.`;
-  }
-}
-
-
-function filteredMergedProjects() {
-  const term = normalizeKey(q("rankingSearch")?.value || "");
-  if (!term) return mergedProjects;
-  return mergedProjects.filter(p => normalizeKey(p.project).includes(term) || normalizeKey((p.judges||[]).join(" ")).includes(term));
-}
-
-function filteredRawRows() {
-  const term = normalizeKey(q("rawSearch")?.value || "");
-  if (!term) return normalizedRows;
-  return normalizedRows.filter(r => normalizeKey(r.project).includes(term) || normalizeKey(r.judge).includes(term) || normalizeKey(r.notes || "").includes(term));
-}
-
-function paginate(items, page) {
-  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
-  const safePage = Math.max(1, Math.min(page, totalPages));
-  const start = (safePage - 1) * PAGE_SIZE;
-  return { items: items.slice(start, start + PAGE_SIZE), page: safePage, totalPages };
 }
 
 function renderRawTable() {
   const tbody = q("rawTable").querySelector("tbody");
-  const data = filteredRawRows();
-  const paged = paginate(data, rawPage);
-  rawPage = paged.page;
-  q("rawPageInfo").textContent = `Page ${paged.page} / ${paged.totalPages} • ${data.length} row(s)`;
-  tbody.innerHTML = paged.items.map(r => `
+  tbody.innerHTML = normalizedRows.map(r => `
     <tr>
       <td>${escapeHtml(r.judge)}</td>
       <td>${escapeHtml(r.project)}</td>
@@ -864,11 +777,7 @@ function renderRawTable() {
 function renderRankings() {
   const unresolved = new Set(tieGroups.flat().map(p => normalizeKey(p.project)));
   const tbody = q("rankingTable").querySelector("tbody");
-  const data = filteredMergedProjects();
-  const paged = paginate(data, rankingPage);
-  rankingPage = paged.page;
-  q("rankingPageInfo").textContent = `Page ${paged.page} / ${paged.totalPages} • ${data.length} project(s)`;
-  tbody.innerHTML = paged.items.map(p => `
+  tbody.innerHTML = mergedProjects.map(p => `
     <tr class="${unresolved.has(normalizeKey(p.project)) ? "tie" : ""}">
       <td><span class="rank-badge">${p.rank}</span></td>
       <td><strong>${escapeHtml(p.project)}</strong></td>
@@ -979,9 +888,6 @@ function resetAll() {
 }
 
 function loadDemo() {
-  rowKeys = new Set();
-  rankingPage = 1;
-  rawPage = 1;
   normalizedRows = [
     {judge:"Judge A",project:"Smart Farm IoT",innovation:8,technical:8,impact:9,scalability:8,presentation:8,notes:"Strong impact with live demo."},
     {judge:"Judge B",project:"Smart Farm IoT",innovation:9,technical:8,impact:9,scalability:8,presentation:7,notes:"Useful and practical."},
@@ -996,7 +902,6 @@ function loadDemo() {
     {judge:"Judge B",project:"Vibe Coding Mentor",innovation:8,technical:8,impact:8,scalability:9,presentation:8,notes:"Good platform potential."},
     {judge:"Judge C",project:"Vibe Coding Mentor",innovation:8,technical:8,impact:8,scalability:9,presentation:8,notes:"Clear and polished."}
   ].map(r => ({ ...r, valid:true, weighted: weightedScore(r) }));
-  normalizedRows.forEach(r => rowKeys.add(buildRowKey(r)));
   renderRawTable();
   applyRanking();
 }
@@ -1327,25 +1232,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   q("filesInput").addEventListener("change", async e => {
     await loadFiles(Array.from(e.target.files || []));
-    e.target.value = "";
   });
 
-  q("rankingSearch").addEventListener("input", () => { rankingPage = 1; renderRankings(); });
-  q("rawSearch").addEventListener("input", () => { rawPage = 1; renderRawTable(); });
-
-  q("rankingPrevBtn").addEventListener("click", () => { rankingPage = Math.max(1, rankingPage - 1); renderRankings(); });
-  q("rankingNextBtn").addEventListener("click", () => { rankingPage += 1; renderRankings(); });
-  q("rawPrevBtn").addEventListener("click", () => { rawPage = Math.max(1, rawPage - 1); renderRawTable(); });
-  q("rawNextBtn").addEventListener("click", () => { rawPage += 1; renderRawTable(); });
-
   q("mergeBtn").addEventListener("click", () => {
-    rankingPage = 1;
-    rawPage = 1;
     applyRanking();
   });
 
   q("reapplyBtn").addEventListener("click", () => {
-    rankingPage = 1;
     applyRanking();
   });
 
