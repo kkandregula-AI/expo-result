@@ -200,7 +200,7 @@ code.inline {
         <input id="filesInput" type="file" multiple accept=".xlsx,.xls,.csv">
         <div class="tiny">Expected columns: judge name, project/team name, innovation, technical, impact, scalability, presentation, notes. Variations like judge, project, team, remarks are auto-mapped.</div>
 
-        <div class="file-list" id="fileList"></div>
+        <div class="file-list" id="fileList"></div><div class="help-box" id="importStatus" style="display:none;"></div>
 
         <div class="help-box">
           <strong>Ranking Formula</strong><br>
@@ -495,6 +495,33 @@ function weightedScore(row) {
   ) / 5;
 }
 
+
+function looksLikeHeaderRow(arr) {
+  const vals = arr.map(v => normalizeKey(v));
+  const hasJudge = vals.some(v => synonyms.judge.some(s => v.includes(s)));
+  const hasProject = vals.some(v => synonyms.project.some(s => v.includes(s)));
+  const scoreHits = ["innovation","technical","impact","scalability","presentation"]
+    .filter(k => vals.some(v => synonyms[k].some(s => v.includes(s)))).length;
+  return hasJudge && hasProject && scoreHits >= 3;
+}
+
+function rowsFromSheet(sheet) {
+  const matrix = XLSX.utils.sheet_to_json(sheet, {header:1, defval:""});
+  if (!matrix.length) return [];
+  let headerIndex = matrix.findIndex(r => Array.isArray(r) && looksLikeHeaderRow(r));
+  if (headerIndex < 0) headerIndex = 0;
+  const headers = (matrix[headerIndex] || []).map(v => String(v || "").trim());
+  const rows = [];
+  for (let i = headerIndex + 1; i < matrix.length; i++) {
+    const row = matrix[i];
+    if (!row || !row.length || row.every(v => String(v ?? "").trim() === "")) continue;
+    const obj = {};
+    headers.forEach((h, idx) => obj[h] = row[idx] ?? "");
+    rows.push(obj);
+  }
+  return rows;
+}
+
 function normalizeSheetRows(jsonRows, fileName) {
   if (!jsonRows.length) return [];
   const headers = Object.keys(jsonRows[0] || {});
@@ -525,35 +552,37 @@ function normalizeSheetRows(jsonRows, fileName) {
   }).filter(r => r.valid);
 }
 
-async function parseFile(file) {
+
+function parseFile(file) {
   const ext = file.name.toLowerCase().split(".").pop();
-  const arrayBuffer = await file.arrayBuffer();
+  return file.arrayBuffer().then(arrayBuffer => {
+    if (typeof XLSX === "undefined") {
+      throw new Error("Excel parser not loaded. Open this app with internet once, then re-try.");
+    }
 
-  if (ext === "csv") {
-    const text = new TextDecoder().decode(arrayBuffer);
-    const wb = XLSX.read(text, { type: "string" });
-    const sheet = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+    if (ext === "csv") {
+      const text = new TextDecoder().decode(arrayBuffer);
+      const wb = XLSX.read(text, { type: "string" });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = rowsFromSheet(sheet);
+      return normalizeSheetRows(rows, file.name);
+    }
+
+    const wb = XLSX.read(arrayBuffer, { type: "array" });
+    const rows = [];
+    wb.SheetNames.forEach(name => {
+      const sheet = wb.Sheets[name];
+      rows.push(...rowsFromSheet(sheet));
+    });
     return normalizeSheetRows(rows, file.name);
-  }
-
-  if (typeof XLSX === "undefined") {
-    throw new Error("Excel parser not loaded. Open this app with internet once, then re-try.");
-  }
-
-  const wb = XLSX.read(arrayBuffer, { type: "array" });
-  const rows = [];
-  wb.SheetNames.forEach(name => {
-    const sheet = wb.Sheets[name];
-    rows.push(...XLSX.utils.sheet_to_json(sheet, { defval: "" }));
   });
-  return normalizeSheetRows(rows, file.name);
 }
 
 async function loadFiles(files) {
+
   normalizedRows = [];
   q("fileList").innerHTML = "";
-  for (const file of files) {
+  let importedTotal = 0;\n  let fileCount = 0;\n  for (const file of files) {
     const itemEl = document.createElement("div");
     itemEl.className = "file-item";
     itemEl.textContent = `Reading ${file.name}...`;
