@@ -582,7 +582,9 @@ async function loadFiles(files) {
 
   normalizedRows = [];
   q("fileList").innerHTML = "";
-  let importedTotal = 0;\n  let fileCount = 0;\n  for (const file of files) {
+  let importedTotal = 0;
+  let fileCount = 0;
+  for (const file of files) {
     const itemEl = document.createElement("div");
     itemEl.className = "file-item";
     itemEl.textContent = `Reading ${file.name}...`;
