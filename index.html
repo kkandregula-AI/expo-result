@@ -187,10 +187,10 @@ code.inline {
         <div class="tiny">Upload all judge Excel sheets, then review merged rankings and resolve tie zones.</div>
 
         <label for="eventName">Hackathon / Expo Name</label>
-        <input id="eventName" placeholder="e.g. AI Innovation Hackathon 2026">
+        <input id="eventName" value="HACKFUSION-2K26" placeholder="HACKFUSION-2K26">
 
         <label for="hostName">Host Institution</label>
-        <input id="hostName" placeholder="e.g. Narayanamma Engineering College">
+        <input id="hostName" value="Brainovision" placeholder="Brainovision">
 
         <label for="logoInput">Host Logo</label>
         <input id="logoInput" type="file" accept="image/*">
@@ -198,7 +198,7 @@ code.inline {
 
         <label for="filesInput">Judge Excel Sheets</label>
         <input id="filesInput" type="file" multiple accept=".xlsx,.xls,.csv">
-        <div class="tiny">Expected columns: judge name, project/team name, innovation, technical, impact, scalability, presentation, notes. Variations like judge, project, team, remarks are auto-mapped.</div>
+        <div class="tiny">Expected columns: judge name, project/team name, innovation, technical, impact, scalability, presentation, notes. Variations like judge, project, team, remarks are auto-mapped. If category columns contain AI / Manual / Final in brackets, the app automatically prefers the Final column.</div>
 
         <div class="file-list" id="fileList"></div><div class="help-box" id="importStatus" style="display:none;"></div>
 
@@ -384,6 +384,13 @@ const DEFAULT_WEIGHTS = {
   scalability: 15,
   presentation: 15
 };
+const STATIC_EVENT_NAME = "HACKFUSION-2K26";
+const STATIC_HOST_NAME = "Brainovision";
+const STATIC_EVENT_DATE = new Date().toLocaleDateString("en-GB", {
+  day: "2-digit",
+  month: "long",
+  year: "numeric"
+});
 
 let priorityOrder = ["innovation","technical","impact","scalability","presentation"];
 let normalizedRows = [];
@@ -457,6 +464,39 @@ function setLogoPreview(file) {
   reader.readAsDataURL(file);
 }
 
+
+function hasFinalBracket(text) {
+  const raw = String(text || "");
+  const s = normalizeKey(raw);
+  return /\(\s*final\s*\)/i.test(raw) || s.includes(" final");
+}
+function hasManualBracket(text) {
+  const raw = String(text || "");
+  const s = normalizeKey(raw);
+  return /\(\s*manual\s*\)/i.test(raw) || s.includes(" manual");
+}
+function hasAiBracket(text) {
+  const raw = String(text || "");
+  const s = normalizeKey(raw);
+  return /\(\s*ai\s*\)/i.test(raw) || s.includes(" ai");
+}
+function mapColumnPreferFinal(headers, type) {
+  const matches = [];
+  for (const head of headers) {
+    const h = normalizeKey(head);
+    const ok = synonyms[type].includes(h) || synonyms[type].some(opt => h.includes(opt));
+    if (ok) matches.push(head);
+  }
+  if (!matches.length) return null;
+  const finalMatch = matches.find(h => hasFinalBracket(h));
+  if (finalMatch) return finalMatch;
+  const manualMatch = matches.find(h => hasManualBracket(h));
+  if (manualMatch) return manualMatch;
+  const aiMatch = matches.find(h => hasAiBracket(h));
+  if (aiMatch) return aiMatch;
+  return matches[0];
+}
+
 function normalizeKey(raw) {
   return String(raw || "").toLowerCase().replace(/[_\-]+/g," ").replace(/\s+/g," ").trim();
 }
@@ -527,11 +567,11 @@ function normalizeSheetRows(jsonRows, fileName) {
   const headers = Object.keys(jsonRows[0] || {});
   const judgeCol = mapColumn(headers, "judge");
   const projectCol = mapColumn(headers, "project");
-  const innovationCol = mapColumn(headers, "innovation");
-  const technicalCol = mapColumn(headers, "technical");
-  const impactCol = mapColumn(headers, "impact");
-  const scalabilityCol = mapColumn(headers, "scalability");
-  const presentationCol = mapColumn(headers, "presentation");
+  const innovationCol = mapColumnPreferFinal(headers, "innovation");
+  const technicalCol = mapColumnPreferFinal(headers, "technical");
+  const impactCol = mapColumnPreferFinal(headers, "impact");
+  const scalabilityCol = mapColumnPreferFinal(headers, "scalability");
+  const presentationCol = mapColumnPreferFinal(headers, "presentation");
   const notesCol = mapColumn(headers, "notes");
 
   return jsonRows.map(r => {
@@ -903,6 +943,7 @@ function exportMergedResultsCSV() {
     "Priority Order",
     "Event Name",
     "Host Institution",
+    "Event Date",
     "Open Room Notes",
     "Ranking Policy Note",
     "Combined Judge Notes"
@@ -921,15 +962,16 @@ function exportMergedResultsCSV() {
       p.judges.join(" | "),
       unresolved.has(normalizeKey(p.project)) ? "Unresolved Tie-up Zone" : "Resolved",
       priorityOrder.map(k => categoryLabels[k]).join(" > "),
-      q("eventName").value.trim(),
-      q("hostName").value.trim(),
+      STATIC_EVENT_NAME,
+      STATIC_HOST_NAME,
+      STATIC_EVENT_DATE,
       q("openRoomNotes").value.trim(),
       q("rankingPolicyNote").value.trim(),
       (p.notes || []).join(" || ")
     ]);
   });
 
-  const eventSlug = (q("eventName").value.trim() || "expojudge").replace(/[^\w\-]+/g, "_");
+  const eventSlug = (STATIC_EVENT_NAME || "expojudge").replace(/[^\w\-]+/g, "_");
   downloadCSV(`${eventSlug}_final_merged_results.csv`, rows);
 }
 
@@ -949,7 +991,7 @@ function exportJudgeBreakupCSV() {
     "Weighted Score / 100",
     "Judge Notes",
     "Event Name",
-    "Host Institution"
+    "Host Institution","Event Date"
   ]];
   normalizedRows.forEach(r => {
     rows.push([
@@ -962,11 +1004,12 @@ function exportJudgeBreakupCSV() {
       r.presentation,
       fmt2(r.weighted),
       r.notes || "",
-      q("eventName").value.trim(),
-      q("hostName").value.trim()
+      STATIC_EVENT_NAME,
+      STATIC_HOST_NAME,
+      STATIC_EVENT_DATE
     ]);
   });
-  const eventSlug = (q("eventName").value.trim() || "expojudge").replace(/[^\w\-]+/g, "_");
+  const eventSlug = (STATIC_EVENT_NAME || "expojudge").replace(/[^\w\-]+/g, "_");
   downloadCSV(`${eventSlug}_judgewise_breakup.csv`, rows);
 }
 
@@ -1016,8 +1059,8 @@ function renderWinners() {
 }
 
 function buildPdfHtml(mode="all") {
-  const eventName = escapeHtml(q("eventName").value.trim() || "ExpoJudge Event");
-  const hostName = escapeHtml(q("hostName").value.trim() || "Host Institution");
+  const eventName = escapeHtml(STATIC_EVENT_NAME);
+  const hostName = escapeHtml(STATIC_HOST_NAME);
   const logoSrc = q("heroLogo")?.src || "";
   const winners = getTopWinners();
   const rows = mode === "winners" ? winners : mergedProjects;
@@ -1113,6 +1156,9 @@ function buildPdfHtml(mode="all") {
             <div class="box"><div class="k">Event</div><div class="v">${eventName}</div></div>
             <div class="box"><div class="k">Host</div><div class="v">${hostName}</div></div>
           </div>
+          <div class="meta" style="margin-top:10px;grid-template-columns:1fr;">
+            <div class="box"><div class="k">Date</div><div class="v">${STATIC_EVENT_DATE}</div></div>
+          </div>
         </div>
 
         <div style="margin-top:14px;">
@@ -1149,7 +1195,7 @@ function buildPdfHtml(mode="all") {
 
         <div class="footer">
           <div>Generated on ${new Date().toLocaleString()}</div>
-          <div>ExpoJudge Final Report</div>
+          <div>${STATIC_EVENT_NAME} • ${STATIC_HOST_NAME} • ${STATIC_EVENT_DATE}</div>
         </div>
       </div>
     </section>
